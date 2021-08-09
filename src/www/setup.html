@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Network configuration</title>
+    <style>
+        *
+        {
+            background-color: #f5f5f5;
+            color: black;
+        }
+    </style>
+</head>
+<body>
+    <form id='networkForm'>
+        <select name='networks' id='ssid'>
+        </select>
+        <input type='password' name='password' id='password' placeholder='Password' disabled>
+        <input type='submit' value='Connect' id='connectButton'>
+    </form>
+    <p id='message'>Loading...</p>
+    <a id='link'></a>
+
+    <script>
+        var networkForm;
+        var networksList;
+        var passwordField;
+        var connectButton;
+        var message;
+        var link;
+
+        function Init()
+        {
+            networkForm = document.querySelector('#networkForm');
+            networksList = document.querySelector('#ssid');
+            passwordField = document.querySelector('#password');
+            connectButton = document.querySelector('#connectButton');
+            message = document.querySelector('#message');
+            link = document.querySelector('#link');
+
+            networkForm.addEventListener('submit', (e) =>
+            {
+                e.preventDefault();
+                e.returnValue = false;
+
+                var data = `ssid=${encodeURIComponent(networksList.options[networksList.selectedIndex].value)}`;
+                if (passwordField.value !== '') { data += `&password=${encodeURIComponent(passwordField.value)}`; }
+
+                var xhttp = new XMLHttpRequest();
+                xhttp.open('POST', './network', true);
+                xhttp.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                xhttp.onreadystatechange = function()
+                {
+                    if (xhttp.readyState == 4 && xhttp.status == 200)
+                    {
+                        message.innerText = 'Network configured, please click the link below if you have not automatically been redirected.';
+                        link.href = xhttp.responseText;
+                        link.innerText = 'Reload';
+                        window.location.href = xhttp.responseText;
+                    }
+                };
+                xhttp.send(data);
+            });
+
+            networksList.addEventListener('change', () =>
+            {
+                if (networksList.value != '')
+                {
+                    var value = networksList.options[networksList.selectedIndex];
+                    passwordField.disabled = parseInt(value.getAttribute('data-encryptionType')) == 0;
+                    passwordField.value = '';
+                }
+            });
+
+            GetNetworks();
+        }
+
+        function GetNetworks()
+        {
+            var xhttp = new XMLHttpRequest();
+            xhttp.open('GET', './networks', true);
+            xhttp.onreadystatechange = function()
+            {
+                if (this.readyState == 4 && this.status == 200)
+                {
+                    message.innerHTML = '';
+                    var networks = JSON.parse(this.responseText);
+                    var usedSSIDs = [];
+                    for (var i = 0; i < networks.length; i++)
+                    {
+                        var network = networks[i];
+                        if (usedSSIDs.includes(network.SSID)) { continue; }
+                        usedSSIDs.push(network.SSID);
+                        var option = document.createElement('option');
+                        option.value = network.SSID;
+                        option.innerHTML = `${network.SSID} (Secure: ${network.encryptionType != 0 ? 'yes' : 'no'})`;
+                        option.setAttribute('data-ssid', network.SSID);
+                        option.setAttribute('data-rssi', network.RSSI);
+                        option.setAttribute('data-encryptionType', network.encryptionType);
+                        networksList.appendChild(option);
+                    }
+                    if (networks.length >= 1) { networksList.dispatchEvent(new Event('change')); }
+                }
+            };
+            xhttp.send();
+        }
+
+        window.addEventListener('load', () => { Init(); });
+    </script>
+</body>
+</html>
