@@ -144,7 +144,6 @@ void SetupAPNetwork()
         String success = ipString != "0.0.0.0" ? "true" : "false";
         String data = "{\"success\":" + success + ",\"ip\":\"" + ipString + "\"}";
         request->send(200, "application/json", data);
-        Reboot(true); //Reboot is given delay to give the server time to send the message.
     });
 
     Log("Done SetupAPNetwork()");
@@ -153,6 +152,8 @@ void SetupAPNetwork()
 void SetupSTANetwork()
 {
     Log("SetupSTANetwork()");
+    
+    WiFi.setAutoReconnect(true);
 
     DisplayString(0, 0, "SSID:" + WiFi.SSID());
     DisplayString(0, 1, "IP:" + WiFi.localIP().toString());
