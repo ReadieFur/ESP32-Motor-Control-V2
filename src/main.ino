@@ -198,7 +198,14 @@ void NetworkSetup()
     }
 
     //Other server configurations are made in the other network setup functions.
-    //These two are just placed here to reduce duplicated code.
+    //These are just placed here to reduce duplicated code.
+    server.on("/network_reset", HTTP_GET, [](AsyncWebServerRequest *request)
+    {
+        Log("GET/network_reset");
+        request->send(521, "text/plain", "GET/network_reset");
+        preferences.clear();
+        Reboot(false);
+    });
     server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) { Log("GET/reboot"); request->send(521, "text/plain", "GET/reboot"); Reboot(true); });
     server.onNotFound([](AsyncWebServerRequest *request) { Log("404"); request->send(404, "text/plain", "404"); });
     server.begin();
