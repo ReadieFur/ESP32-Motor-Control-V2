@@ -55,10 +55,18 @@
                 {
                     if (xhttp.readyState == 4 && xhttp.status == 200)
                     {
-                        message.innerText = 'Network configured, please click the link below if you have not automatically been redirected.';
-                        link.href = xhttp.responseText;
-                        link.innerText = 'Reload';
-                        window.location.href = xhttp.responseText;
+                        var response = JSON.parse(xhttp.responseText);
+                        if (!response.success)
+                        {
+                            message.innerText = 'Failed to connect to the network.'
+                        }
+                        else
+                        {
+                            message.innerText = 'Network configured, please click the link below if you have not automatically been redirected.';
+                            link.href = 'http://' + response.ip;
+                            link.innerText = 'Reload';
+                            window.location.href = 'http://' + response.ip;
+                        }
                     }
                 };
                 xhttp.send(data);
