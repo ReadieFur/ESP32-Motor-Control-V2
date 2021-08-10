@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Controls</title>
+    <style>
+        *
+        {
+            background-color: #f5f5f5;
+            color: black;
+        }
+    </style>
+</head>
+<body>
+    <!-- <input type="checkbox" id="fade"> -->
+    <div id='controls'></div>
+    <p id='messages'></p>
+    <script>
+        var controls;
+        var messages;
+        /*var fade;*/
+        var motorsObject = null;
+        var websocket;
+
+        function Init()
+        {
+            controls = document.querySelector('#controls');
+            controls.innerHTML = '';
+            messages = document.querySelector('#messages');
+            messages.innerHTML = '';
+            /*fade = document.querySelector('#fade');*/
+
+            websocket = new WebSocket(`ws://${location.hostname}/websocket`);
+            /*websocket = new WebSocket(`ws://192.168.1.247/websocket`);*/
+            websocket.onopen = websocketOnOpen;
+            websocket.onmessage = websocketOnMessage;
+            websocket.onerror = websocketOnError;
+        }
+
+        function websocketOnOpen()
+        {
+            websocket.send(JSON.stringify({command: 'getMotors'}));
+        }
+
+        function websocketOnMessage(evt)
+        {
+            var data = JSON.parse(evt.data);
+            console.log(data);
+            if (motorsObject == null)
+            {
+                motorsObject = {};
+                Object.keys(data.data).forEach(key =>
+                {
+                    const value = data.data[key];
+
+                    var p = document.createElement('p');
+                    p.innerText = key;
+
+                    var input = document.createElement('input');
+                    input.type = 'range';
+                    input.min = 0;
+                    input.max = 255;
+                    input.value = value;
+
+                    /*input.oninput = function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/
+                    input.onchange = function()
+                    {
+                        var data = {};
+                        Object.keys(motorsObject).forEach(key =>
+                        {
+                            const value = motorsObject[key];
+                            data[key] = value.value;
+                        });
+                        websocket.send(JSON.stringify({command: 'setMotors', data: data/*, fade: fade.checked*/}));
+                    };
+
+                    motorsObject[key] = input;
+                    controls.appendChild(p);
+                    controls.appendChild(input);
+                });
+            }
+            else
+            {
+                Object.keys(data.data).forEach(key =>
+                {
+                    const value = data.data[key];
+                    motorsObject[key].value = value;
+                });
+            }
+        }
+
+        function websocketOnError()
+        {
+            Init();
+        }
+
+        window.addEventListener('load', () => { Init(); });
+    </script>
+</body>
+</html>

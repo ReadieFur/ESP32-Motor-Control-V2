@@ -6,12 +6,15 @@
 
 const uint8_t* boldFont = u8x8_font_amstrad_cpc_extended_f;
 const uint8_t* lightFont = u8x8_font_5x7_f;
+const int pwmFrequency = 5000;
+const int pwmResolution = 8;
 
 U8X8_SSD1306_128X64_NONAME_SW_I2C display(/*clockPin*/ 15, /*dataPin*/ 4, /* resetPin*/ 16);
 Preferences preferences; //https://randomnerdtutorials.com/esp32-save-data-permanently-preferences/
 AsyncWebServer server(80); //https://randomnerdtutorials.com/esp32-web-server-spiffs-spi-flash-file-system/
-AsyncWebSocket websocket("/websocket/"); //https://randomnerdtutorials.com/esp32-websocket-server-arduino/
+AsyncWebSocket websocket("/websocket"); //https://randomnerdtutorials.com/esp32-websocket-server-arduino/
 String networksJson; //Only defined if SetupAPNetwork() is run.
+DynamicJsonDocument motorsObject(64); //Only defined if SetupSTANetwork() is run.
 
 void Log(const String message) //Look into using char* instead of String, I've heard that String is bad for memory leaks.
 {    
@@ -117,6 +120,8 @@ void SetupAPNetwork()
     IPAddress IP = WiFi.softAPIP();
     DisplayString(0, 0, "SSID:" + String(ssid));
     DisplayString(0, 1, "IP:" + IP.toString());
+    Log("SSID: " + String(ssid));
+    Log("IP: " + IP.toString());
 
     //Setup the AP server.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -150,6 +155,137 @@ void SetupAPNetwork()
     Log("Done SetupAPNetwork()");
 }
 
+void SamplePins(bool &GPIO38, bool &GPIO39, bool &GPIO34, bool &GPIO35)
+{
+    Log("SamplePins()");
+
+    //Why these pins? They are all next to each other.
+    //Why not start from the end of the board? Pin 37 on my two boards seemed to always read positive even when nothing was connected.
+    pinMode(GPIO_NUM_38, INPUT);
+    pinMode(GPIO_NUM_39, INPUT);
+    pinMode(GPIO_NUM_34, INPUT);
+    pinMode(GPIO_NUM_35, INPUT);
+
+    //Take multiple samples to make sure we're not getting a false positive.
+    GPIO38 = (digitalRead(GPIO_NUM_38) + digitalRead(GPIO_NUM_38) + digitalRead(GPIO_NUM_38)) == 3;
+    GPIO39 = (digitalRead(GPIO_NUM_39) + digitalRead(GPIO_NUM_39) + digitalRead(GPIO_NUM_39)) == 3;
+    GPIO34 = (digitalRead(GPIO_NUM_34) + digitalRead(GPIO_NUM_34) + digitalRead(GPIO_NUM_34)) == 3;
+    GPIO35 = (digitalRead(GPIO_NUM_35) + digitalRead(GPIO_NUM_35) + digitalRead(GPIO_NUM_35)) == 3;
+
+    Log("GPIO38: " + String(GPIO38));
+    Log("GPIO39: " + String(GPIO39));
+    Log("GPIO34: " + String(GPIO34));
+    Log("GPIO35: " + String(GPIO35));
+
+    Log("Done SamplePins()");
+}
+
+void HandleWebSocketMessage(AsyncWebSocketClient* client, void *arg, uint8_t *data, size_t len)
+{
+	AwsFrameInfo *info = (AwsFrameInfo*)arg;
+	//Checks if all packets have been recieved (I think).
+  	if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT)
+  	{
+		char* message = (char*)data;
+        bool broadcast = false;
+		String response;
+		DynamicJsonDocument JsonMessage(128); //Reserve at least 128 bytes for the JsonDocument, if more bytes are required it will allocate itself more.
+		DynamicJsonDocument JsonResponse(64);
+		DeserializationError error = deserializeJson(JsonMessage, message);
+
+		if (!error && !JsonMessage["command"].isNull())
+		{
+            JsonResponse["error"] = false;
+
+			if (JsonMessage["command"] == "getMotors")
+            {
+                JsonObject data = JsonResponse.createNestedObject("data");
+
+                for (JsonPair kv : motorsObject.as<JsonObject>())
+                {
+                    data[kv.key().c_str()] = kv.value().as<JsonObject>()["speed"];
+                }
+            }
+            else if (JsonMessage["command"] == "setMotors" && !JsonMessage["data"].isNull())
+            {
+                broadcast = true;
+
+                JsonObject data = JsonResponse.createNestedObject("data");
+
+                int fade = !JsonMessage["fade"].isNull() && JsonMessage["fade"] == true;
+
+                for (JsonPair kv : JsonMessage["data"].as<JsonObject>())
+                {
+                    if (kv.key().c_str() != "")
+                    {
+                        int speed = kv.value().as<int>();
+                        if (speed <= 0) { speed = 0; }
+                        else if (speed >= 255) { speed = 255; }
+
+                        //TODO Fade.
+                        // if (fade)
+                        // {
+                        //     bool reverse = speed < motorsObject[kv.key().c_str()]["speed"];
+                        //     int change = reverse ? motorsObject[kv.key().c_str()]["speed"] - speed : speed - motorsObject[kv.key().c_str()]["speed"];
+                        //     int fadeSpeed = 100 / change; //100 is for 100ms fade.
+                        //     // for (size_t i = motorsObject[kv.key().c_str()]["speed"]; (reverse ? i < speed : i > speed); (reverse ? i++ : i--))
+                        //     // {
+                        //     //     motorsObject[kv.key().c_str()]["speed"] = i;
+                        //     //     vTaskDelay(fade / portTICK_PERIOD_MS);
+                        //     //     feedLoopWDT();
+                        //     // }
+                        // }
+                        // else
+                        // {
+                        //     ledcWrite(motorsObject[kv.key().c_str()]["channel"], 255 - speed);
+                        // }
+
+                        ledcWrite(motorsObject[kv.key().c_str()]["channel"], 255 - speed);
+                        motorsObject[kv.key().c_str()]["speed"] = speed;
+                        data[kv.key().c_str()] = speed;
+                        Log(String(speed));
+                    }
+                }
+            }
+            else
+            {
+                JsonResponse["error"] = true;
+            }
+		}
+		else
+		{
+			JsonResponse["error"] = true;
+		}
+
+		serializeJson(JsonResponse, response);
+        if (broadcast) { websocket.textAll(response); }
+        else { client->text(response); }
+  	}
+}
+
+void WebsocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len)
+{
+    // Log("WS/Websocket"); //Websocket event logs will happen frequently which will slow down the program.
+
+	switch (type)
+	{
+		case WS_EVT_CONNECT:
+			break;
+		case WS_EVT_DISCONNECT:
+			break;
+		case WS_EVT_DATA:
+			HandleWebSocketMessage(client, arg, data, len);
+			break;
+		case WS_EVT_PONG:
+			break;
+		case WS_EVT_ERROR:
+			break;
+		default:
+			//Unknown event type.
+			break;
+	}
+}
+
 void SetupSTANetwork()
 {
     Log("SetupSTANetwork()");
@@ -158,8 +294,64 @@ void SetupSTANetwork()
 
     DisplayString(0, 0, "SSID:" + WiFi.SSID());
     DisplayString(0, 1, "IP:" + WiFi.localIP().toString());
+    Log("SSID: " + WiFi.SSID());
+    Log("IP: " + WiFi.localIP().toString());
 
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) { Log("GET/"); request->send(200, "text/html", "GET/"); });
+    ledcSetup(1, pwmFrequency, pwmResolution);
+    ledcAttachPin(GPIO_NUM_21, 1);
+    ledcWrite(1, 255);
+    ledcSetup(2, pwmFrequency, pwmResolution);
+    ledcAttachPin(GPIO_NUM_22, 2);
+    ledcWrite(2, 255);
+    ledcSetup(3, pwmFrequency, pwmResolution);
+    ledcAttachPin(GPIO_NUM_19, 3);
+    ledcWrite(3, 255);
+    ledcSetup(4, pwmFrequency, pwmResolution);
+    ledcAttachPin(GPIO_NUM_23, 4);
+    ledcWrite(4, 255);
+
+    int numMotors = 0;
+    bool GPIO38, GPIO39, GPIO34, GPIO35;
+    SamplePins(GPIO38, GPIO39, GPIO34, GPIO35);
+    if (GPIO38)
+    {
+        JsonObject GPIO38 = motorsObject.createNestedObject("GPIO38");
+        GPIO38["speed"] = 0;
+        GPIO38["channel"] = 1;
+        numMotors++;
+    }
+    if (GPIO39)
+    {
+        JsonObject GPIO39 = motorsObject.createNestedObject("GPIO39");
+        GPIO39["speed"] = 0;
+        GPIO39["channel"] = 2;
+        numMotors++;
+    }
+    if (GPIO34)
+    {
+        JsonObject GPIO34 = motorsObject.createNestedObject("GPIO34");
+        GPIO34["speed"] = 0;
+        GPIO34["channel"] = 3;
+        numMotors++;
+    }
+    if (GPIO35)
+    {
+        JsonObject GPIO35 = motorsObject.createNestedObject("GPIO35");
+        GPIO35["speed"] = 0;
+        GPIO35["channel"] = 4;
+        numMotors++;
+    }
+    DisplayString(0, 2, "Motors:" + String(numMotors));
+
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+    {
+        Log("GET/");
+        const String data = "<!DOCTYPE html><html lang='en'><head> <meta charset='UTF-8'> <meta http-equiv='X-UA-Compatible' content='IE=edge'> <meta name='viewport' content='width=device-width, initial-scale=1.0'> <title>Controls</title> <style>*{background-color: #f5f5f5; color: black;}</style></head><body> <div id='controls'></div><p id='messages'></p><script>var controls; var messages; /*var fade;*/ var motorsObject=null; var websocket; function Init(){controls=document.querySelector('#controls'); controls.innerHTML=''; messages=document.querySelector('#messages'); messages.innerHTML=''; /*fade=document.querySelector('#fade');*/ websocket=new WebSocket(`ws://${location.hostname}/websocket`); /*websocket=new WebSocket(`ws://192.168.1.247/websocket`);*/ websocket.onopen=websocketOnOpen; websocket.onmessage=websocketOnMessage; websocket.onerror=websocketOnError;}function websocketOnOpen(){websocket.send(JSON.stringify({command: 'getMotors'}));}function websocketOnMessage(evt){var data=JSON.parse(evt.data); console.log(data); if (motorsObject==null){motorsObject={}; Object.keys(data.data).forEach(key=>{const value=data.data[key]; var p=document.createElement('p'); p.innerText=key; var input=document.createElement('input'); input.type='range'; input.min=0; input.max=255; input.value=value; /*input.oninput=function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/ input.onchange=function(){var data={}; Object.keys(motorsObject).forEach(key=>{const value=motorsObject[key]; data[key]=value.value;}); websocket.send(JSON.stringify({command: 'setMotors', data: data/*, fade: fade.checked*/}));}; motorsObject[key]=input; controls.appendChild(p); controls.appendChild(input);});}else{Object.keys(data.data).forEach(key=>{const value=data.data[key]; motorsObject[key].value=value;});}}function websocketOnError(){Init();}window.addEventListener('load', ()=>{Init();}); </script></body></html>";
+        request->send(200, "text/html", data);
+    });
+
+	websocket.onEvent(WebsocketEvent);
+	server.addHandler(&websocket);
 
     Log("Done SetupSTANetwork()");
 }
@@ -217,9 +409,9 @@ void NetworkSetup()
 
 void setup()
 {
-  	Log("setup()");
 	Serial.begin(115200);
 	display.begin();
+  	Log("setup()");
 
 	NetworkSetup();
 
