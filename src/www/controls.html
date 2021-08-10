@@ -41,7 +41,7 @@
             ip.onchange = function()
             {
                 Init(ip.value);
-            }
+            };
 
             websocket = new WebSocket(`ws://${ip.value}/websocket`);
             /*websocket = new WebSocket(`ws://192.168.1.247/websocket`);*/

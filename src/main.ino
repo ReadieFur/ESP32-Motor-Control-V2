@@ -14,7 +14,7 @@ Preferences preferences; //https://randomnerdtutorials.com/esp32-save-data-perma
 AsyncWebServer server(80); //https://randomnerdtutorials.com/esp32-web-server-spiffs-spi-flash-file-system/
 AsyncWebSocket websocket("/websocket"); //https://randomnerdtutorials.com/esp32-websocket-server-arduino/
 String networksJson; //Only defined if SetupAPNetwork() is run.
-DynamicJsonDocument motorsObject(64); //Only defined if SetupSTANetwork() is run.
+DynamicJsonDocument motorsObject(256); //Only defined if SetupSTANetwork() is run.
 
 void Log(const String message) //Look into using char* instead of String, I've heard that String is bad for memory leaks.
 {    
@@ -189,8 +189,8 @@ void HandleWebSocketMessage(AsyncWebSocketClient* client, void *arg, uint8_t *da
 		char* message = (char*)data;
         bool broadcast = false;
 		String response;
-		DynamicJsonDocument JsonMessage(128); //Reserve at least 128 bytes for the JsonDocument, if more bytes are required it will allocate itself more.
-		DynamicJsonDocument JsonResponse(64);
+		DynamicJsonDocument JsonMessage(256);
+		DynamicJsonDocument JsonResponse(256);
 		DeserializationError error = deserializeJson(JsonMessage, message);
 
 		if (!error && !JsonMessage["command"].isNull())
@@ -298,16 +298,16 @@ void SetupSTANetwork()
     Log("IP: " + WiFi.localIP().toString());
 
     ledcSetup(1, pwmFrequency, pwmResolution);
-    ledcAttachPin(GPIO_NUM_21, 1);
+    ledcAttachPin(GPIO_NUM_21, 1); //38
     ledcWrite(1, 255);
     ledcSetup(2, pwmFrequency, pwmResolution);
-    ledcAttachPin(GPIO_NUM_22, 2);
+    ledcAttachPin(GPIO_NUM_22, 2); //39
     ledcWrite(2, 255);
     ledcSetup(3, pwmFrequency, pwmResolution);
-    ledcAttachPin(GPIO_NUM_19, 3);
+    ledcAttachPin(GPIO_NUM_19, 3); //34
     ledcWrite(3, 255);
     ledcSetup(4, pwmFrequency, pwmResolution);
-    ledcAttachPin(GPIO_NUM_23, 4);
+    ledcAttachPin(GPIO_NUM_23, 4); //35
     ledcWrite(4, 255);
 
     int numMotors = 0;
@@ -343,10 +343,14 @@ void SetupSTANetwork()
     }
     DisplayString(0, 2, "Motors:" + String(numMotors));
 
+    String _motorsString;
+    serializeJson(motorsObject, _motorsString);
+    Log(_motorsString);
+
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
     {
         Log("GET/");
-        const String data = "<!DOCTYPE html><html lang='en'><head> <meta charset='UTF-8'> <meta http-equiv='X-UA-Compatible' content='IE=edge'> <meta name='viewport' content='width=device-width, initial-scale=1.0'> <title>Controls</title> <style>*{background-color: #f5f5f5; color: black;}</style></head><body> <input type='text' id='ip'> <div id='controls'></div><p id='messages'></p><script>var ip; var controls; var messages; /*var fade;*/ var motorsObject=null; var websocket; function Init(_ip=location.hostname){websocket=null; motorsObject=null; ip=document.querySelector('#ip'); ip.value=_ip; controls=document.querySelector('#controls'); controls.innerHTML=''; messages=document.querySelector('#messages'); messages.innerHTML=''; /*fade=document.querySelector('#fade');*/ ip.onchange=function(){Init(ip.value);}websocket=new WebSocket(`ws://${ip.value}/websocket`); /*websocket=new WebSocket(`ws://192.168.1.247/websocket`);*/ websocket.onopen=websocketOnOpen; websocket.onmessage=websocketOnMessage; websocket.onerror=websocketOnError;}function websocketOnOpen(){websocket.send(JSON.stringify({command: 'getMotors'}));}function websocketOnMessage(evt){var data=JSON.parse(evt.data); console.log(data); if (motorsObject==null){motorsObject={}; Object.keys(data.data).forEach(key=>{const value=data.data[key]; var p=document.createElement('p'); p.innerText=key; var input=document.createElement('input'); input.type='range'; input.min=0; input.max=255; input.value=value; /*input.oninput=function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/ input.onchange=function(){var data={}; Object.keys(motorsObject).forEach(key=>{const value=motorsObject[key]; data[key]=value.value;}); websocket.send(JSON.stringify({command: 'setMotors', data: data/*, fade: fade.checked*/}));}; motorsObject[key]=input; controls.appendChild(p); controls.appendChild(input);});}else{Object.keys(data.data).forEach(key=>{const value=data.data[key]; motorsObject[key].value=value;});}}function websocketOnError(){Init();}window.addEventListener('load', ()=>{Init();}); </script></body></html>";
+        const String data = "<!DOCTYPE html><html lang='en'><head> <meta charset='UTF-8'> <meta http-equiv='X-UA-Compatible' content='IE=edge'> <meta name='viewport' content='width=device-width, initial-scale=1.0'> <title>Controls</title> <style>*{background-color: #f5f5f5; color: black;}</style></head><body> <input type='text' id='ip'> <div id='controls'></div><p id='messages'></p><script>var ip; var controls; var messages; /*var fade;*/ var motorsObject=null; var websocket; function Init(_ip=location.hostname){websocket=null; motorsObject=null; ip=document.querySelector('#ip'); ip.value=_ip; controls=document.querySelector('#controls'); controls.innerHTML=''; messages=document.querySelector('#messages'); messages.innerHTML=''; /*fade=document.querySelector('#fade');*/ ip.onchange=function(){Init(ip.value);}; websocket=new WebSocket(`ws://${ip.value}/websocket`); /*websocket=new WebSocket(`ws://192.168.1.247/websocket`);*/ websocket.onopen=websocketOnOpen; websocket.onmessage=websocketOnMessage; websocket.onerror=websocketOnError;}function websocketOnOpen(){websocket.send(JSON.stringify({command: 'getMotors'}));}function websocketOnMessage(evt){var data=JSON.parse(evt.data); console.log(data); if (motorsObject==null){motorsObject={}; Object.keys(data.data).forEach(key=>{const value=data.data[key]; var p=document.createElement('p'); p.innerText=key; var input=document.createElement('input'); input.type='range'; input.min=0; input.max=255; input.value=value; /*input.oninput=function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/ input.onchange=function(){var data={}; Object.keys(motorsObject).forEach(key=>{const value=motorsObject[key]; data[key]=value.value;}); websocket.send(JSON.stringify({command: 'setMotors', data: data/*, fade: fade.checked*/}));}; motorsObject[key]=input; controls.appendChild(p); controls.appendChild(input);});}else{Object.keys(data.data).forEach(key=>{const value=data.data[key]; motorsObject[key].value=value;});}}function websocketOnError(){Init();}window.addEventListener('load', ()=>{Init();}); </script></body></html>";
         request->send(200, "text/html", data);
     });
 
