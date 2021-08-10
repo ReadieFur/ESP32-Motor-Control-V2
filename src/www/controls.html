@@ -14,25 +14,36 @@
     </style>
 </head>
 <body>
-    <!-- <input type="checkbox" id="fade"> -->
+    <!-- <input type='checkbox' id='fade'> -->
+    <input type='text' id='ip'>
     <div id='controls'></div>
     <p id='messages'></p>
     <script>
+        var ip;
         var controls;
         var messages;
         /*var fade;*/
         var motorsObject = null;
         var websocket;
 
-        function Init()
+        function Init(_ip = location.hostname)
         {
+            websocket = null;
+            motorsObject = null;
+            ip = document.querySelector('#ip');
+            ip.value = _ip;
             controls = document.querySelector('#controls');
             controls.innerHTML = '';
             messages = document.querySelector('#messages');
             messages.innerHTML = '';
             /*fade = document.querySelector('#fade');*/
 
-            websocket = new WebSocket(`ws://${location.hostname}/websocket`);
+            ip.onchange = function()
+            {
+                Init(ip.value);
+            }
+
+            websocket = new WebSocket(`ws://${ip.value}/websocket`);
             /*websocket = new WebSocket(`ws://192.168.1.247/websocket`);*/
             websocket.onopen = websocketOnOpen;
             websocket.onmessage = websocketOnMessage;
