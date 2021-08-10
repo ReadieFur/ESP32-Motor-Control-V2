@@ -343,10 +343,6 @@ void SetupSTANetwork()
     }
     DisplayString(0, 2, "Motors:" + String(numMotors));
 
-    String _motorsString;
-    serializeJson(motorsObject, _motorsString);
-    Log(_motorsString);
-
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
     {
         Log("GET/");
