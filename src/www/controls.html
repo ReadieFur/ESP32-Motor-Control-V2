@@ -107,7 +107,12 @@
             Init();
         }
 
-        window.addEventListener('load', () => { Init(); });
+        window.addEventListener('load', () =>
+        {
+            var search = new URLSearchParams(location.search);
+            if (search.has('ip')) { Init(search.get('ip')); }
+            else { Init(location.hostname == '' ? '127.0.0.1' : location.hostname); }
+        });
     </script>
 </body>
 </html>
