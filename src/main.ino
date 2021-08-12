@@ -6,6 +6,11 @@
 
 const uint8_t* boldFont = u8x8_font_amstrad_cpc_extended_f;
 const uint8_t* lightFont = u8x8_font_5x7_f;
+const int codedConnections = 8;
+//Motor 1 will just be array[0], 2 -> array[1], etc.
+const gpio_num_t dataPin [codedConnections] = { GPIO_NUM_21, GPIO_NUM_22, GPIO_NUM_19, GPIO_NUM_23, GPIO_NUM_18, GPIO_NUM_5, GPIO_NUM_17, GPIO_NUM_2 };
+const gpio_num_t checkerPin [codedConnections] = { GPIO_NUM_38, GPIO_NUM_39, GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_32, GPIO_NUM_33, GPIO_NUM_27, GPIO_NUM_12 };
+//PWM channels will just be 1 through 8.
 const int pwmFrequency = 5000;
 const int pwmResolution = 8;
 
@@ -14,9 +19,9 @@ Preferences preferences; //https://randomnerdtutorials.com/esp32-save-data-perma
 AsyncWebServer server(80); //https://randomnerdtutorials.com/esp32-web-server-spiffs-spi-flash-file-system/
 AsyncWebSocket websocket("/websocket"); //https://randomnerdtutorials.com/esp32-websocket-server-arduino/
 String networksJson; //Only defined if SetupAPNetwork() is run.
-DynamicJsonDocument motorsObject(256); //Only defined if SetupSTANetwork() is run.
+int speeds [codedConnections] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 
-void Log(const String message) //Look into using char* instead of String, I've heard that String is bad for memory leaks.
+void Log(const String message)
 {    
 	Serial.println(message);
 	display.clearLine(7);
@@ -155,31 +160,7 @@ void SetupAPNetwork()
     Log("Done SetupAPNetwork()");
 }
 
-void SamplePins(bool &GPIO38, bool &GPIO39, bool &GPIO34, bool &GPIO35)
-{
-    Log("SamplePins()");
-
-    //Why these pins? They are all next to each other.
-    //Why not start from the end of the board? Pin 37 on my two boards seemed to always read positive even when nothing was connected.
-    pinMode(GPIO_NUM_38, INPUT);
-    pinMode(GPIO_NUM_39, INPUT);
-    pinMode(GPIO_NUM_34, INPUT);
-    pinMode(GPIO_NUM_35, INPUT);
-
-    //Take multiple samples to make sure we're not getting a false positive.
-    GPIO38 = (digitalRead(GPIO_NUM_38) + digitalRead(GPIO_NUM_38) + digitalRead(GPIO_NUM_38)) == 3;
-    GPIO39 = (digitalRead(GPIO_NUM_39) + digitalRead(GPIO_NUM_39) + digitalRead(GPIO_NUM_39)) == 3;
-    GPIO34 = (digitalRead(GPIO_NUM_34) + digitalRead(GPIO_NUM_34) + digitalRead(GPIO_NUM_34)) == 3;
-    GPIO35 = (digitalRead(GPIO_NUM_35) + digitalRead(GPIO_NUM_35) + digitalRead(GPIO_NUM_35)) == 3;
-
-    Log("GPIO38: " + String(GPIO38));
-    Log("GPIO39: " + String(GPIO39));
-    Log("GPIO34: " + String(GPIO34));
-    Log("GPIO35: " + String(GPIO35));
-
-    Log("Done SamplePins()");
-}
-
+//I am playing a game of shit in shit out. If incorrect data is sent in then incorrect data will be sent back out. This is not a tool to be used by other programs so I am coding it knowing what data I will get, I am not adding more checks because I cant be bothered and it will slow the program down.
 void HandleWebSocketMessage(AsyncWebSocketClient* client, void *arg, uint8_t *data, size_t len)
 {
 	AwsFrameInfo *info = (AwsFrameInfo*)arg;
@@ -189,73 +170,48 @@ void HandleWebSocketMessage(AsyncWebSocketClient* client, void *arg, uint8_t *da
 		char* message = (char*)data;
         bool broadcast = false;
 		String response;
-		DynamicJsonDocument JsonMessage(256);
-		DynamicJsonDocument JsonResponse(256);
+		DynamicJsonDocument JsonMessage(JSON_OBJECT_SIZE(2) + JSON_ARRAY_SIZE(codedConnections)); //This should be enough memory, it may be more than needed but it should be fine.
+		StaticJsonDocument<JSON_ARRAY_SIZE(codedConnections)> JsonResponse;
 		DeserializationError error = deserializeJson(JsonMessage, message);
 
 		if (!error && !JsonMessage["command"].isNull())
 		{
-            JsonResponse["error"] = false;
-
-			if (JsonMessage["command"] == "getMotors")
+			if (JsonMessage["command"] == "get")
             {
-                JsonObject data = JsonResponse.createNestedObject("data");
-
-                for (JsonPair kv : motorsObject.as<JsonObject>())
+                //Not quite sure how to write the data straight to the root object so I am looping through the array and adding it to the root object.
+                for (int i = 0; i < codedConnections; ++i)
                 {
-                    data[kv.key().c_str()] = kv.value().as<JsonObject>()["speed"];
+                    JsonResponse.add(speeds[i]);
                 }
             }
-            else if (JsonMessage["command"] == "setMotors" && !JsonMessage["data"].isNull())
+            else if (JsonMessage["command"] == "set" && !JsonMessage["data"].isNull())
             {
                 broadcast = true;
 
-                JsonObject data = JsonResponse.createNestedObject("data");
-
-                int fade = !JsonMessage["fade"].isNull() && JsonMessage["fade"] == true;
-
-                for (JsonPair kv : JsonMessage["data"].as<JsonObject>())
+                int counter = 0;
+                for (auto &&speed : JsonMessage["data"].as<JsonArray>())
                 {
-                    if (kv.key().c_str() != "")
+                    if (speeds[counter] != -1)
                     {
-                        int speed = kv.value().as<int>();
-                        if (speed <= 0) { speed = 0; }
-                        else if (speed >= 255) { speed = 255; }
+                        int _speed = speed.as<int>();
+                        if (speed <= 0) { _speed = 0; }
+                        else if (speed >= 256) { _speed = 256; }
 
-                        //TODO Fade.
-                        // if (fade)
-                        // {
-                        //     bool reverse = speed < motorsObject[kv.key().c_str()]["speed"];
-                        //     int change = reverse ? motorsObject[kv.key().c_str()]["speed"] - speed : speed - motorsObject[kv.key().c_str()]["speed"];
-                        //     int fadeSpeed = 100 / change; //100 is for 100ms fade.
-                        //     // for (size_t i = motorsObject[kv.key().c_str()]["speed"]; (reverse ? i < speed : i > speed); (reverse ? i++ : i--))
-                        //     // {
-                        //     //     motorsObject[kv.key().c_str()]["speed"] = i;
-                        //     //     vTaskDelay(fade / portTICK_PERIOD_MS);
-                        //     //     feedLoopWDT();
-                        //     // }
-                        // }
-                        // else
-                        // {
-                        //     ledcWrite(motorsObject[kv.key().c_str()]["channel"], 255 - speed);
-                        // }
-
-                        ledcWrite(motorsObject[kv.key().c_str()]["channel"], 255 - speed);
-                        motorsObject[kv.key().c_str()]["speed"] = speed;
-                        data[kv.key().c_str()] = speed;
-                        Log(String(speed));
+                        ledcWrite(counter + 1, 256 - _speed);
+                        speeds[counter] = _speed;
+                        JsonResponse.add(_speed);
                     }
+                    else
+                    {
+                        JsonResponse.add(-1);
+                    }
+                    
+                    counter++;
                 }
             }
-            else
-            {
-                JsonResponse["error"] = true;
-            }
+            else { JsonResponse["error"] = true; }
 		}
-		else
-		{
-			JsonResponse["error"] = true;
-		}
+        else { JsonResponse["error"] = true; }
 
 		serializeJson(JsonResponse, response);
         if (broadcast) { websocket.textAll(response); }
@@ -286,6 +242,34 @@ void WebsocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEve
 	}
 }
 
+void SetupPins()
+{
+    Log("SetupPins()");
+
+    int connectedPins = 0;
+    for (int i = 0; i < codedConnections; i++)
+    {
+        const int j = i + 1;
+        ledcSetup(j, pwmFrequency, pwmResolution);
+        ledcAttachPin(dataPin[i], j);
+        ledcWrite(j, 0);
+
+        pinMode(checkerPin[i], INPUT);
+        bool isConnected = (digitalRead(checkerPin[i]) + digitalRead(checkerPin[i]) + digitalRead(checkerPin[i])) == 3;
+        if (isConnected)
+        {
+            speeds[i] = 0;
+            connectedPins++;
+        }
+        Log("GPIO" + String(checkerPin[i]) + "(GPIO" + String(dataPin[i]) + "): " + String(isConnected));
+
+        ledcWrite(j, 256);
+    }
+    DisplayString(0, 2, "Motors:" + String(connectedPins));
+
+    Log("Done SetupPins()");
+}
+
 void SetupSTANetwork()
 {
     Log("SetupSTANetwork()");
@@ -297,58 +281,22 @@ void SetupSTANetwork()
     Log("SSID: " + WiFi.SSID());
     Log("IP: " + WiFi.localIP().toString());
 
-    ledcSetup(1, pwmFrequency, pwmResolution);
-    ledcAttachPin(GPIO_NUM_21, 1); //38
-    ledcWrite(1, 255);
-    ledcSetup(2, pwmFrequency, pwmResolution);
-    ledcAttachPin(GPIO_NUM_22, 2); //39
-    ledcWrite(2, 255);
-    ledcSetup(3, pwmFrequency, pwmResolution);
-    ledcAttachPin(GPIO_NUM_19, 3); //34
-    ledcWrite(3, 255);
-    ledcSetup(4, pwmFrequency, pwmResolution);
-    ledcAttachPin(GPIO_NUM_23, 4); //35
-    ledcWrite(4, 255);
-
-    int numMotors = 0;
-    bool GPIO38, GPIO39, GPIO34, GPIO35;
-    SamplePins(GPIO38, GPIO39, GPIO34, GPIO35);
-    if (GPIO38)
-    {
-        JsonObject GPIO38 = motorsObject.createNestedObject("GPIO38");
-        GPIO38["speed"] = 0;
-        GPIO38["channel"] = 1;
-        numMotors++;
-    }
-    if (GPIO39)
-    {
-        JsonObject GPIO39 = motorsObject.createNestedObject("GPIO39");
-        GPIO39["speed"] = 0;
-        GPIO39["channel"] = 2;
-        numMotors++;
-    }
-    if (GPIO34)
-    {
-        JsonObject GPIO34 = motorsObject.createNestedObject("GPIO34");
-        GPIO34["speed"] = 0;
-        GPIO34["channel"] = 3;
-        numMotors++;
-    }
-    if (GPIO35)
-    {
-        JsonObject GPIO35 = motorsObject.createNestedObject("GPIO35");
-        GPIO35["speed"] = 0;
-        GPIO35["channel"] = 4;
-        numMotors++;
-    }
-    DisplayString(0, 2, "Motors:" + String(numMotors));
+    SetupPins();
 
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
     {
         Log("GET/");
-        const String data = "<!DOCTYPE html><html lang='en'><head> <meta charset='UTF-8'> <meta http-equiv='X-UA-Compatible' content='IE=edge'> <meta name='viewport' content='width=device-width, initial-scale=1.0'> <title>Controls</title> <style>*{background-color: #f5f5f5; color: black;}</style></head><body> <input type='text' id='ip'> <div id='controls'></div><p id='messages'></p><script>var ip; var controls; var messages; /*var fade;*/ var motorsObject=null; var websocket; function Init(_ip=location.hostname){websocket=null; motorsObject=null; ip=document.querySelector('#ip'); ip.value=_ip; controls=document.querySelector('#controls'); controls.innerHTML=''; messages=document.querySelector('#messages'); messages.innerHTML=''; /*fade=document.querySelector('#fade');*/ ip.onchange=function(){Init(ip.value);}; websocket=new WebSocket(`ws://${ip.value}/websocket`); /*websocket=new WebSocket(`ws://192.168.1.247/websocket`);*/ websocket.onopen=websocketOnOpen; websocket.onmessage=websocketOnMessage; websocket.onerror=websocketOnError;}function websocketOnOpen(){websocket.send(JSON.stringify({command: 'getMotors'}));}function websocketOnMessage(evt){var data=JSON.parse(evt.data); console.log(data); if (motorsObject==null){motorsObject={}; Object.keys(data.data).forEach(key=>{const value=data.data[key]; var p=document.createElement('p'); p.innerText=key; var input=document.createElement('input'); input.type='range'; input.min=0; input.max=255; input.value=value; /*input.oninput=function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/ input.onchange=function(){var data={}; Object.keys(motorsObject).forEach(key=>{const value=motorsObject[key]; data[key]=value.value;}); websocket.send(JSON.stringify({command: 'setMotors', data: data/*, fade: fade.checked*/}));}; motorsObject[key]=input; controls.appendChild(p); controls.appendChild(input);});}else{Object.keys(data.data).forEach(key=>{const value=data.data[key]; motorsObject[key].value=value;});}}function websocketOnError(){Init();}window.addEventListener('load', ()=>{var search=new URLSearchParams(location.search); if (search.has('ip')){Init(search.get('ip'));}else{Init(location.hostname=='' ? '127.0.0.1' : location.hostname);}}); </script></body></html>";
+        const String data = "<!DOCTYPE html><html lang='en'><head> <meta charset='UTF-8'> <meta http-equiv='X-UA-Compatible' content='IE=edge'> <meta name='viewport' content='width=device-width, initial-scale=1.0'> <title>Controls</title> <style>*{background-color: #f5f5f5; color: black;}</style></head><body> <input type='text' id='ip'> <div id='controls'></div><p id='messages'></p><script>var ip; var controls; var messages; /*var fade;*/ var motorsObject=null; var websocket; function Init(_ip=location.hostname){websocket=null; motorsObject=null; ip=document.querySelector('#ip'); ip.value=_ip; controls=document.querySelector('#controls'); controls.innerHTML=''; messages=document.querySelector('#messages'); messages.innerHTML=''; /*fade=document.querySelector('#fade');*/ ip.onchange=function(){Init(ip.value);}; WebsocketInit();}function WebsocketInit(){websocket=new WebSocket(`ws://${ip.value}/websocket`); /*websocket=new WebSocket(`ws://192.168.1.247/websocket`);*/ websocket.onopen=websocketOnOpen; websocket.onmessage=websocketOnMessage; websocket.onerror=websocketOnError;}function websocketOnOpen(){websocket.send(JSON.stringify({command: 'get'}));}function websocketOnMessage(evt){var data=JSON.parse(evt.data); if (motorsObject==null){motorsObject=[]; for (var i=0; i < data.length; i++){const speed=data[i]; var input=null; if (speed !=-1){var p=document.createElement('p'); p.innerText=`Motor ${i + 1}`; input=document.createElement('input'); input.type='range'; input.min=0; input.max=256; input.value=speed; /*input.oninput=function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/ input.onchange=function(){var data=[]; motorsObject.forEach(element=>{if (element !=null){data.push(element.value);}else{data.push(-1);}}); websocket.send(JSON.stringify({command: 'set', data: data/*, fade: fade.checked*/}));}; controls.appendChild(p); controls.appendChild(input);}motorsObject.push(input);}}else{for (let i=0; i < data.length; i++){if (motorsObject[i] !=null){motorsObject[i].value=data[i];}}}}function websocketOnError(){WebsocketInit();}window.addEventListener('load', ()=>{var search=new URLSearchParams(location.search); if (search.has('ip')){Init(search.get('ip'));}else{Init(location.hostname=='' ? '127.0.0.1' : location.hostname);}}); </script></body></html>";
         request->send(200, "text/html", data);
     });
+
+    //TODO Rescan for new devices instead of having to reboot to check the connections.
+    // server.on("/setupPins", HTTP_GET, [](AsyncWebServerRequest *request)
+    // {
+    //     Log("GET/setupPins");
+    //     SetupPins();
+    //     request->send(200, "text/html", "OK");
+    // });
 
 	websocket.onEvent(WebsocketEvent);
 	server.addHandler(&websocket);

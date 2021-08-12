@@ -43,6 +43,11 @@
                 Init(ip.value);
             };
 
+            WebsocketInit();
+        }
+
+        function WebsocketInit()
+        {
             websocket = new WebSocket(`ws://${ip.value}/websocket`);
             /*websocket = new WebSocket(`ws://192.168.1.247/websocket`);*/
             websocket.onopen = websocketOnOpen;
@@ -52,59 +57,72 @@
 
         function websocketOnOpen()
         {
-            websocket.send(JSON.stringify({command: 'getMotors'}));
+            websocket.send(JSON.stringify({command: 'get'}));
         }
 
         function websocketOnMessage(evt)
         {
             var data = JSON.parse(evt.data);
-            console.log(data);
             if (motorsObject == null)
             {
-                motorsObject = {};
-                Object.keys(data.data).forEach(key =>
+                motorsObject = [];
+
+                for (var i = 0; i < data.length; i++)
                 {
-                    const value = data.data[key];
+                    const speed = data[i];
 
-                    var p = document.createElement('p');
-                    p.innerText = key;
-
-                    var input = document.createElement('input');
-                    input.type = 'range';
-                    input.min = 0;
-                    input.max = 255;
-                    input.value = value;
-
-                    /*input.oninput = function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/
-                    input.onchange = function()
+                    var input = null;
+                    if (speed != -1)
                     {
-                        var data = {};
-                        Object.keys(motorsObject).forEach(key =>
-                        {
-                            const value = motorsObject[key];
-                            data[key] = value.value;
-                        });
-                        websocket.send(JSON.stringify({command: 'setMotors', data: data/*, fade: fade.checked*/}));
-                    };
+                        var p = document.createElement('p');
+                        p.innerText = `Motor ${i + 1}`;
 
-                    motorsObject[key] = input;
-                    controls.appendChild(p);
-                    controls.appendChild(input);
-                });
+                        input = document.createElement('input');
+                        input.type = 'range';
+                        input.min = 0;
+                        input.max = 256;
+                        input.value = speed;
+
+                        /*input.oninput = function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/
+                        input.onchange = function()
+                        {
+                            var data = [];
+                            motorsObject.forEach(element =>
+                            {
+                                if (element != null)
+                                {
+                                    data.push(element.value);
+                                }
+                                else
+                                {
+                                    data.push(-1);
+                                }
+                            });
+                            websocket.send(JSON.stringify({command: 'set', data: data/*, fade: fade.checked*/}));
+                        };
+
+                        controls.appendChild(p);
+                        controls.appendChild(input);
+                    }
+
+                    motorsObject.push(input);
+                }
             }
             else
             {
-                Object.keys(data.data).forEach(key =>
+                for (let i = 0; i < data.length; i++)
                 {
-                    const value = data.data[key];
-                    motorsObject[key].value = value;
-                });
+                    if (motorsObject[i] != null)
+                    {
+                        motorsObject[i].value = data[i];
+                    }
+                }
             }
         }
 
         function websocketOnError()
         {
-            Init();
+            WebsocketInit();
         }
 
         window.addEventListener('load', () =>
