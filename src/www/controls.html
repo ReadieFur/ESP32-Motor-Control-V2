@@ -5,20 +5,83 @@
     <meta http-equiv='X-UA-Compatible' content='IE=edge'>
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
     <title>Controls</title>
+    <style id='themeColours'></style>
     <style>
-        *
+        body
         {
-            background-color: #f5f5f5;
-            color: black;
+            background-color: rgb(var(--backgroundColour));
+            color: rgb(var(--foregroundColour));
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        p
+        {
+            font-weight: 500;
+            margin-bottom: 10px;
+        }
+
+        .sliderContainer
+        {
+            position: relative;
+            width: max-content;
+            height: max-content;
+            height: 15px;
+            width: 130px;
+            background-color: rgb(var(--backgroundAltColour));
+        }
+
+        .sliderBackground
+        {
+            position: absolute;
+            background-color: rgb(var(--accentColour));
+            height: 15px;
+            width: 130px;
+        }
+
+        input[type='range']
+        {
+            position: absolute;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+        }
+
+        input[type='range']::-webkit-slider-thumb
+        {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 15px;
+            height: 15px;
+            background: rgb(var(--foregroundColour));
+            cursor: pointer;
+        }
+
+        input[type='text']
+        {
+            outline-width: 0;
+            font-weight: normal;
+            border: 0;
+            background-color: transparent;
+            border-bottom: 1px solid rgba(var(--foregroundColour), 1);
+            color: rgb(var(--foregroundColour));
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
     </style>
 </head>
 <body>
     <!-- <input type='checkbox' id='fade'> -->
+    <p>IP:</p>
     <input type='text' id='ip'>
     <div id='controls'></div>
     <p id='messages'></p>
+    <p>Dark mode:</p>
+    <input type='checkbox' id='darkMode' checked>
     <script>
+        var themeColours;
+        var themeToggle;
         var ip;
         var controls;
         var messages;
@@ -28,6 +91,8 @@
 
         function Init(_ip = location.hostname)
         {
+            themeColours = document.querySelector('#themeColours');
+            themeToggle = document.querySelector('#darkMode');
             websocket = null;
             motorsObject = null;
             ip = document.querySelector('#ip');
@@ -38,6 +103,9 @@
             messages.innerHTML = '';
             /*fade = document.querySelector('#fade');*/
 
+            themeToggle.onchange = ToggleTheme;
+            ToggleTheme();
+
             ip.onchange = function()
             {
                 Init(ip.value);
@@ -46,21 +114,32 @@
             WebsocketInit();
         }
 
+        function ToggleTheme()
+        {
+            themeColours.innerHTML = `
+            :root
+            {
+                --foregroundColour: ${darkMode.checked ? '255, 255, 255' : '0, 0, 0'};
+                --backgroundColour: ${darkMode.checked ? '13, 17, 23' : '255, 255, 255'};
+                --backgroundAltColour: ${darkMode.checked ? '39, 43, 46' : '225, 225, 225'};
+                --accentColour: ${darkMode.checked ? '100, 0, 255' : '255, 120, 0'};
+            }`;
+        }
+
         function WebsocketInit()
         {
             websocket = new WebSocket(`ws://${ip.value}/websocket`);
-            /*websocket = new WebSocket(`ws://192.168.1.247/websocket`);*/
-            websocket.onopen = websocketOnOpen;
-            websocket.onmessage = websocketOnMessage;
-            websocket.onerror = websocketOnError;
+            websocket.onopen = WebsocketOnOpen;
+            websocket.onmessage = WebsocketOnMessage;
+            websocket.onerror = WebsocketOnError;
         }
 
-        function websocketOnOpen()
+        function WebsocketOnOpen()
         {
             websocket.send(JSON.stringify({command: 'get'}));
         }
 
-        function websocketOnMessage(evt)
+        function WebsocketOnMessage(evt)
         {
             var data = JSON.parse(evt.data);
             if (motorsObject == null)
@@ -75,15 +154,29 @@
                     if (speed != -1)
                     {
                         var p = document.createElement('p');
-                        p.innerText = `Motor ${i + 1}`;
+                        p.innerText = `Motor ${i + 1}:`;
+
+                        var container = document.createElement('div');
+                        container.className = 'sliderContainer';
+
+                        var background = document.createElement('span');
+                        background.className = 'sliderBackground';
 
                         input = document.createElement('input');
                         input.type = 'range';
                         input.min = 0;
                         input.max = 256;
                         input.value = speed;
+                        input.step = 1;
 
-                        /*input.oninput = function() //This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/
+                        background.style.width = `${(speed / input.max) * 100}%`;
+
+                        /*This sends messages too fast for the server to keep up. As a work around, for speed fading I could change the speed gradually on the server side or send over extra data telling the server if it should fade and at what speed.*/
+                        input.oninput = function(e)
+                        {
+                            e.target.parentElement.querySelector('.sliderBackground').style.width = `${(e.target.value / e.target.max) * 100}%`;
+                        };
+                        
                         input.onchange = function()
                         {
                             var data = [];
@@ -102,7 +195,9 @@
                         };
 
                         controls.appendChild(p);
-                        controls.appendChild(input);
+                        container.appendChild(background);
+                        container.appendChild(input);
+                        controls.appendChild(container);
                     }
 
                     motorsObject.push(input);
@@ -115,12 +210,13 @@
                     if (motorsObject[i] != null)
                     {
                         motorsObject[i].value = data[i];
+                        motorsObject[i].parentElement.querySelector('.sliderBackground').style.width = `${(data[i] / motorsObject[i].max) * 100}%`;
                     }
                 }
             }
         }
 
-        function websocketOnError()
+        function WebsocketOnError()
         {
             WebsocketInit();
         }
